@@ -46,7 +46,7 @@ import { getAgentDir, getEnableSkillCommands, getQuietStartup } from './pi-setti
 import { toAvailableCommandsFromPiGetCommands } from './pi-commands.js'
 import { maybeAuthRequiredError } from './auth-required.js'
 import { isAbsolute } from 'node:path'
-import { existsSync, readFileSync, realpathSync, readdirSync, statSync, unlinkSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import type { AvailableCommand } from '@agentclientprotocol/sdk'
 import { join, dirname, basename } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -451,7 +451,23 @@ export class PiAcpAgent implements ACPAgent {
 
       if (cmd === 'compact') {
         const customInstructions = args.join(' ').trim() || undefined
-        const res = await session.proc.compact(customInstructions)
+        let res: unknown
+        try {
+          res = await session.proc.compact(customInstructions)
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          if (/already compacted/i.test(msg)) {
+            await this.conn.sessionUpdate({
+              sessionId: session.sessionId,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                content: { type: 'text', text: 'No compaction needed — the session was just automatically compacted.' }
+              }
+            })
+            return { stopReason: 'end_turn' }
+          }
+          throw err
+        }
 
         const r: any = res && typeof res === 'object' ? (res as any) : null
         const tokensBefore = typeof r?.tokensBefore === 'number' ? r.tokensBefore : null
@@ -1181,6 +1197,23 @@ export class PiAcpAgent implements ACPAgent {
 
       await session.proc.setThinkingLevel(params.value)
 
+      // Persist thinking level to Pi's settings.json so it survives restart.
+      // Pi's setThinkingLevel only sets in-memory state; we need to write
+      // to disk so the next session start picks up the user's preference.
+      try {
+        const settingsPath = join(getAgentDir(), 'settings.json')
+        let settings: Record<string, unknown> = {}
+        try {
+          settings = JSON.parse(readFileSync(settingsPath, 'utf-8')) as Record<string, unknown>
+        } catch {
+          // File doesn't exist or is invalid — start fresh.
+        }
+        settings.thinkingLevel = params.value
+        writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf-8')
+      } catch {
+        // Non-fatal: Pi will still use the in-memory value for this session.
+      }
+
       void this.conn.sessionUpdate({
         sessionId: session.sessionId,
         update: {
@@ -1226,7 +1259,22 @@ async function getThinkingState(
     })())
 
   const tl = typeof state?.thinkingLevel === 'string' ? state.thinkingLevel : null
-  if (tl && isThinkingLevel(tl)) current = tl
+  if (tl && isThinkingLevel(tl) && tl !== 'off') {
+    current = tl
+  } else {
+    // Pi's in-memory state is "off" (or missing). Check settings.json for
+    // a persisted thinking level that Pi wrote via setThinkingLevel.
+    try {
+      const settingsPath = join(getAgentDir(), 'settings.json')
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf-8')) as any
+      const persisted = typeof settings?.thinkingLevel === 'string' ? settings.thinkingLevel : null
+      if (persisted && isThinkingLevel(persisted) && persisted !== 'off') {
+        current = persisted
+      }
+    } catch {
+      // No settings file — keep the in-memory value.
+    }
+  }
 
   const available: ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']
 

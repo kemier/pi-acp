@@ -274,6 +274,9 @@ export class PiAcpSession {
   /** Cached model context window for usage_update denominator. */
   private contextWindow: number | null = null
 
+  /** Tool call ID for the current compaction (shared between compaction_start and compaction_end). */
+  compactionToolCallId: string | null = null
+
   readonly proc: PiRpcProcess
   private readonly conn: AgentSideConnection
   private readonly fileCommands: FileSlashCommand[]
@@ -876,24 +879,27 @@ export class PiAcpSession {
       }
 
       case 'compaction_start': {
+        this.compactionToolCallId = `compaction-${Date.now()}`
         this.emit({
-          sessionUpdate: 'agent_message_chunk',
-          content: {
-            type: 'text',
-            text: 'Context nearing limit, running automatic compaction...'
-          } satisfies ContentBlock
+          sessionUpdate: 'tool_call',
+          toolCallId: this.compactionToolCallId,
+          kind: 'other',
+          title: 'Context compacting',
+          status: 'in_progress',
+          _meta: { contextCompaction: true }
         })
         break
       }
 
       case 'compaction_end': {
         this.emit({
-          sessionUpdate: 'agent_message_chunk',
-          content: {
-            type: 'text',
-            text: 'Automatic compaction finished; context was summarized to continue the session.'
-          } satisfies ContentBlock
+          sessionUpdate: 'tool_call_update',
+          toolCallId: this.compactionToolCallId ?? `compaction-${Date.now()}`,
+          title: 'Context compacted',
+          status: 'completed',
+          _meta: { contextCompaction: true }
         })
+        this.compactionToolCallId = null
         void this.publishUsageUpdate()
         break
       }
