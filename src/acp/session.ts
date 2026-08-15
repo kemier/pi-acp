@@ -27,6 +27,9 @@ import {
   isBashTool
 } from './translate/bash.js'
 import { toolResultToText } from './translate/pi-tools.js'
+import { buildUsageUpdateFromStats, buildUsageUpdateFromTurnUsage } from './usage.js'
+import { formatToolTitle } from './tool-titles.js'
+import type { GoalSnapshot } from './goal.js'
 
 type SessionCreateParams = {
   cwd: string
@@ -255,17 +258,31 @@ export class SessionManager {
   }
 }
 
+type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+
 export class PiAcpSession {
   readonly sessionId: string
   readonly cwd: string
   readonly mcpServers: McpServer[]
 
+  /** Last thinking level set via ACP; Pi get_state can lag or stay stale on some backends. */
+  private thinkingLevelOverride: ThinkingLevel | null = null
+
   private startupInfo: string | null = null
   private startupInfoSent = false
+
+  /** Cached model context window for usage_update denominator. */
+  private contextWindow: number | null = null
 
   readonly proc: PiRpcProcess
   private readonly conn: AgentSideConnection
   private readonly fileCommands: FileSlashCommand[]
+
+  /** Adapter-owned Codex-compatible goal snapshot for vscode-acp's goal chip. */
+  goalSnapshot: GoalSnapshot | null = null
+
+  /** Assistant text streamed during the most recent ACP prompt turn. */
+  lastTurnAssistantText = ''
 
   // Used to map abort semantics to ACP stopReason.
   // Applies to the currently running turn.
@@ -283,6 +300,13 @@ export class PiAcpSession {
   // when retry, compaction, or queued continuations run. The session-level prompt
   // completes only when `agent_settled` is emitted.
   private inAgentLoop = false
+
+  // ACP ContentChunk.messageId: all text/thought deltas in one prompt share one
+  // id so clients group tokens into a single bubble. A unique id per token would
+  // split "Hello world" into one word per line (vscode-acp, Zed). Status notices
+  // (retry/compaction) omit messageId so they stay separate from the model reply.
+  private turnSeq = 0
+  private turnMessageId: string | null = null
 
   // For ACP diff support: capture file contents before edit/write mutations,
   // then emit ToolCallContent {type:"diff"}. Compatible structured edit/write
@@ -317,6 +341,46 @@ export class PiAcpSession {
   setStartupInfo(text: string) {
     this.startupInfo = text
     this.startupInfoSent = false
+  }
+
+  setThinkingLevelOverride(level: ThinkingLevel): void {
+    this.thinkingLevelOverride = level
+  }
+
+  getThinkingLevelOverride(): ThinkingLevel | null {
+    return this.thinkingLevelOverride
+  }
+
+  /** Publish ACP usage_update so clients (vscode-acp, Zed) can show the context ring. */
+  async publishUsageUpdate(turnUsage?: unknown): Promise<void> {
+    try {
+      await this.refreshContextWindow()
+      const stats = await this.proc.getSessionStats()
+      const update =
+        turnUsage !== undefined
+          ? buildUsageUpdateFromTurnUsage(turnUsage, this.contextWindow, stats)
+          : buildUsageUpdateFromStats(stats)
+      if (!update) return
+
+      this.emit({
+        sessionUpdate: 'usage_update',
+        used: update.used,
+        size: update.size,
+        ...(update.cost ? { cost: update.cost } : {})
+      })
+    } catch {
+      // Best effort — don't fail the turn.
+    }
+  }
+
+  private async refreshContextWindow(): Promise<void> {
+    try {
+      const state = (await this.proc.getState()) as any
+      const cw = state?.model?.contextWindow
+      if (typeof cw === 'number' && cw > 0) this.contextWindow = cw
+    } catch {
+      // ignore
+    }
   }
 
   /**
@@ -413,6 +477,22 @@ export class PiAcpSession {
       })
   }
 
+  private ensureTurnMessageId(): string {
+    if (!this.turnMessageId) {
+      this.turnSeq += 1
+      this.turnMessageId = `turn-${this.sessionId}-${this.turnSeq}`
+    }
+    return this.turnMessageId
+  }
+
+  private streamingChunk(sessionUpdate: 'agent_message_chunk' | 'agent_thought_chunk', text: string): SessionUpdate {
+    return {
+      sessionUpdate,
+      content: { type: 'text', text } satisfies ContentBlock,
+      messageId: this.ensureTurnMessageId()
+    }
+  }
+
   private async flushEmits(): Promise<void> {
     await this.lastEmit
   }
@@ -474,6 +554,9 @@ export class PiAcpSession {
   private startTurn(t: QueuedTurn): void {
     this.cancelRequested = false
     this.inAgentLoop = false
+    this.turnSeq += 1
+    this.turnMessageId = `turn-${this.sessionId}-${this.turnSeq}`
+    this.lastTurnAssistantText = ''
 
     this.pendingTurn = { resolve: t.resolve, reject: t.reject }
 
@@ -501,6 +584,7 @@ export class PiAcpSession {
 
         this.pendingTurn = null
         this.inAgentLoop = false
+        this.turnMessageId = null
 
         // If the prompt failed, do not automatically proceed—pi may be unhealthy.
         // But we still clear the queueDepth metadata.
@@ -522,18 +606,13 @@ export class PiAcpSession {
 
         // Stream assistant text.
         if (ame?.type === 'text_delta' && typeof ame.delta === 'string') {
-          this.emit({
-            sessionUpdate: 'agent_message_chunk',
-            content: { type: 'text', text: ame.delta } satisfies ContentBlock
-          })
+          this.lastTurnAssistantText += ame.delta
+          this.emit(this.streamingChunk('agent_message_chunk', ame.delta))
           break
         }
 
         if (ame?.type === 'thinking_delta' && typeof ame.delta === 'string') {
-          this.emit({
-            sessionUpdate: 'agent_thought_chunk',
-            content: { type: 'text', text: ame.delta } satisfies ContentBlock
-          })
+          this.emit(this.streamingChunk('agent_thought_chunk', ame.delta))
           break
         }
 
@@ -584,7 +663,7 @@ export class PiAcpSession {
               this.emit({
                 sessionUpdate: 'tool_call',
                 toolCallId,
-                title: toolName,
+                title: formatToolTitle(toolName, rawInput),
                 kind: toToolKind(toolName),
                 status,
                 locations,
@@ -665,7 +744,7 @@ export class PiAcpSession {
           this.emit({
             sessionUpdate: 'tool_call',
             toolCallId,
-            title: toolName,
+            title: formatToolTitle(toolName, args),
             kind: toToolKind(toolName),
             status: 'in_progress',
             locations,
@@ -796,7 +875,7 @@ export class PiAcpSession {
         break
       }
 
-      case 'auto_compaction_start': {
+      case 'compaction_start': {
         this.emit({
           sessionUpdate: 'agent_message_chunk',
           content: {
@@ -807,7 +886,7 @@ export class PiAcpSession {
         break
       }
 
-      case 'auto_compaction_end': {
+      case 'compaction_end': {
         this.emit({
           sessionUpdate: 'agent_message_chunk',
           content: {
@@ -815,6 +894,7 @@ export class PiAcpSession {
             text: 'Automatic compaction finished; context was summarized to continue the session.'
           } satisfies ContentBlock
         })
+        void this.publishUsageUpdate()
         break
       }
 
@@ -826,6 +906,7 @@ export class PiAcpSession {
       case 'turn_end': {
         // pi uses `turn_end` for sub-steps (e.g. tool_use) and will often start another turn.
         // Do NOT resolve the ACP `session/prompt` here; wait for `agent_settled`.
+        void this.publishUsageUpdate((ev as any).message?.usage)
         break
       }
 
@@ -839,11 +920,13 @@ export class PiAcpSession {
       case 'agent_settled': {
         // Ensure all updates derived from pi events are delivered before we resolve
         // the ACP `session/prompt` request.
+        void this.publishUsageUpdate()
         void this.flushEmits().finally(() => {
           const reason: StopReason = this.cancelRequested ? 'cancelled' : 'end_turn'
           this.pendingTurn?.resolve(reason)
           this.pendingTurn = null
           this.inAgentLoop = false
+          this.turnMessageId = null
 
           // Start next queued prompt, if any.
           const next = this.turnQueue.shift()
