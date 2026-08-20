@@ -54,7 +54,14 @@ export class FakePiRpcProcess {
   }
 
   async getState(): Promise<any> {
-    return {}
+    return { model: { contextWindow: 200_000 } }
+  }
+
+  async getSessionStats(): Promise<any> {
+    return {
+      contextUsage: { tokens: 1000, contextWindow: 200_000, percent: 0.5 },
+      cost: 0.01
+    }
   }
 
   async getAvailableModels(): Promise<any> {

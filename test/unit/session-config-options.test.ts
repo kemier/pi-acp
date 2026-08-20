@@ -23,13 +23,30 @@ class FakeSessions {
   }
 }
 
+function withThinkingLevelOverride<T extends Record<string, unknown>>(
+  session: T
+): T & {
+  setThinkingLevelOverride: (level: string) => void
+  getThinkingLevelOverride: () => string | null
+} {
+  let override: string | null = null
+  return Object.assign(session, {
+    setThinkingLevelOverride(level: string) {
+      override = level
+    },
+    getThinkingLevelOverride() {
+      return override
+    }
+  })
+}
+
 test('PiAcpAgent: newSession returns configOptions for model and thinking selectors', async () => {
   const realSetTimeout = globalThis.setTimeout
   ;(globalThis as any).setTimeout = () => 0 as any
 
   try {
     const conn = new FakeAgentSideConnection()
-    const session = {
+    const session = withThinkingLevelOverride({
       sessionId: 's1',
       cwd: process.cwd(),
       proc: {
@@ -50,7 +67,7 @@ test('PiAcpAgent: newSession returns configOptions for model and thinking select
       },
       setStartupInfo() {},
       sendStartupInfoIfPending() {}
-    }
+    })
 
     const agent = new PiAcpAgent(asAgentConn(conn), {} as any)
     ;(agent as any).sessions = new FakeSessions(session) as any
@@ -102,7 +119,7 @@ test('PiAcpAgent: setSessionConfigOption maps model changes to pi and emits conf
   }
   const setModelCalls: Array<{ provider: string; modelId: string }> = []
 
-  const session = {
+  const session = withThinkingLevelOverride({
     sessionId: 's1',
     cwd: process.cwd(),
     proc: {
@@ -122,7 +139,7 @@ test('PiAcpAgent: setSessionConfigOption maps model changes to pi and emits conf
         state.model = { provider, id: modelId }
       }
     }
-  }
+  })
 
   const agent = new PiAcpAgent(asAgentConn(conn), {} as any)
   ;(agent as any).sessions = new FakeSessions(session) as any
@@ -154,7 +171,7 @@ test('PiAcpAgent: setSessionConfigOption maps thought level changes to pi and em
   }
   const thinkingLevels: string[] = []
 
-  const session = {
+  const session = withThinkingLevelOverride({
     sessionId: 's1',
     cwd: process.cwd(),
     proc: {
@@ -171,7 +188,7 @@ test('PiAcpAgent: setSessionConfigOption maps thought level changes to pi and em
         state.thinkingLevel = level
       }
     }
-  }
+  })
 
   const agent = new PiAcpAgent(asAgentConn(conn), {} as any)
   ;(agent as any).sessions = new FakeSessions(session) as any
@@ -200,4 +217,43 @@ test('PiAcpAgent: setSessionConfigOption maps thought level changes to pi and em
       }
     }
   ])
+})
+
+test('PiAcpAgent: setSessionConfigOption keeps thought level when pi get_state stays stale', async () => {
+  const conn = new FakeAgentSideConnection()
+  const state = {
+    thinkingLevel: 'off',
+    model: { provider: 'test', id: 'alpha' }
+  }
+  const thinkingLevels: string[] = []
+
+  const session = withThinkingLevelOverride({
+    sessionId: 's1',
+    cwd: process.cwd(),
+    proc: {
+      async getAvailableModels() {
+        return {
+          models: [{ provider: 'test', id: 'alpha', name: 'Alpha' }]
+        }
+      },
+      async getState() {
+        return state
+      },
+      async setThinkingLevel(level: string) {
+        thinkingLevels.push(level)
+      }
+    }
+  })
+
+  const agent = new PiAcpAgent(asAgentConn(conn), {} as any)
+  ;(agent as any).sessions = new FakeSessions(session) as any
+
+  const result = await agent.setSessionConfigOption({
+    sessionId: 's1',
+    configId: 'thought_level',
+    value: 'high'
+  } as any)
+
+  assert.deepEqual(thinkingLevels, ['high'])
+  assert.equal(result.configOptions.find(option => option.id === 'thought_level')?.currentValue, 'high')
 })

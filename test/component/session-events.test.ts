@@ -30,7 +30,8 @@ test('PiAcpSession: emits agent_message_chunk for text_delta', async () => {
   assert.equal(conn.updates[0]!.sessionId, 's1')
   assert.deepEqual(conn.updates[0]!.update, {
     sessionUpdate: 'agent_message_chunk',
-    content: { type: 'text', text: 'hi' }
+    content: { type: 'text', text: 'hi' },
+    messageId: 'turn-s1-1'
   })
 })
 
@@ -58,8 +59,32 @@ test('PiAcpSession: emits agent_thought_chunk for thinking_delta', async () => {
   assert.equal(conn.updates[0]!.sessionId, 's1')
   assert.deepEqual(conn.updates[0]!.update, {
     sessionUpdate: 'agent_thought_chunk',
-    content: { type: 'text', text: 'thinking...' }
+    content: { type: 'text', text: 'thinking...' },
+    messageId: 'turn-s1-1'
   })
+})
+
+test('PiAcpSession: consecutive text_delta chunks share one turn-scoped messageId', async () => {
+  const conn = new FakeAgentSideConnection()
+  const proc = new FakePiRpcProcess()
+
+  new PiAcpSession({
+    sessionId: 's1',
+    cwd: process.cwd(),
+    mcpServers: [],
+    proc: proc as any,
+    conn: asAgentConn(conn),
+    fileCommands: []
+  })
+
+  proc.emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'Hello' } })
+  proc.emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: ' world' } })
+
+  await new Promise(r => setTimeout(r, 0))
+
+  assert.equal(conn.updates.length, 2)
+  assert.equal((conn.updates[0]!.update as { messageId?: string }).messageId, 'turn-s1-1')
+  assert.equal((conn.updates[1]!.update as { messageId?: string }).messageId, 'turn-s1-1')
 })
 
 test('PiAcpSession: emits tool_call + tool_call_update + completes', async () => {
@@ -434,7 +459,7 @@ test('PiAcpSession: emits agent_message_chunk for auto_compaction_end', async ()
 
   await new Promise(r => setTimeout(r, 0))
 
-  assert.equal(conn.updates.length, 1)
+  assert.equal(conn.updates.length, 2)
   assert.deepEqual(conn.updates[0]!.update, {
     sessionUpdate: 'agent_message_chunk',
     content: {
@@ -442,6 +467,7 @@ test('PiAcpSession: emits agent_message_chunk for auto_compaction_end', async ()
       text: 'Automatic compaction finished; context was summarized to continue the session.'
     }
   })
+  assert.equal((conn.updates[1]!.update as any).sessionUpdate, 'usage_update')
 })
 
 test('PiAcpSession: preserves ordering when auto_retry_start is interleaved with text_delta events', async () => {
@@ -466,12 +492,20 @@ test('PiAcpSession: preserves ordering when auto_retry_start is interleaved with
   assert.deepEqual(
     conn.updates.map(u => u.update),
     [
-      { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'before ' } },
+      {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'before ' },
+        messageId: 'turn-s1-1'
+      },
       {
         sessionUpdate: 'agent_message_chunk',
         content: { type: 'text', text: 'Retrying (attempt 1/2, waiting 2s)...' }
       },
-      { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'after' } }
+      {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'after' },
+        messageId: 'turn-s1-1'
+      }
     ]
   )
 })
@@ -899,4 +933,34 @@ test('PiAcpSession: defaults notify severity to info when notifyType is absent',
   assert.deepEqual((conn.updates[0]!.update as any)._meta, {
     piAcp: { notify: { level: 'info' } }
   })
+})
+
+test('PiAcpSession: emits usage_update after agent_settled', async () => {
+  const conn = new FakeAgentSideConnection()
+  const proc = new FakePiRpcProcess()
+
+  const session = new PiAcpSession({
+    sessionId: 's1',
+    cwd: process.cwd(),
+    mcpServers: [],
+    proc: proc as any,
+    conn: asAgentConn(conn),
+    fileCommands: []
+  })
+
+  const p = session.prompt('hello')
+  proc.emit({ type: 'agent_start' })
+  proc.emit({ type: 'turn_end', message: { usage: { totalTokens: 1500 } } })
+  proc.emit({ type: 'agent_end' })
+  proc.emit({ type: 'agent_settled' })
+  await p
+
+  await new Promise(r => setTimeout(r, 0))
+
+  const usageUpdates = conn.updates.filter(u => (u.update as any).sessionUpdate === 'usage_update')
+  assert.ok(usageUpdates.length >= 1)
+  const last = usageUpdates.at(-1)!.update as any
+  assert.equal(last.size, 200_000)
+  assert.ok(last.used > 0)
+  assert.equal(last.used, Math.min(last.used, last.size))
 })
