@@ -1,5 +1,5 @@
 import { basename } from 'node:path'
-import { bashCommand } from './translate/bash.js'
+import { bashCommand, stripShellPrefix } from './translate/bash.js'
 
 function toolPath(args: unknown): string | null {
   const record = args as { path?: unknown; file_path?: unknown } | null | undefined
@@ -14,7 +14,7 @@ export function formatToolTitle(toolName: string, args: unknown): string {
   const lower = name.toLowerCase()
 
   if (lower === 'bash' || lower === 'shell') {
-    return bashCommand(args) ?? name
+    return stripShellPrefix(bashCommand(args) ?? name) ?? name
   }
 
   const path = toolPath(args)

@@ -38,7 +38,8 @@ import {
   bashTerminalExitMeta,
   bashTerminalInfoMeta,
   bashTerminalOutputMeta,
-  isBashTool
+  isBashTool,
+  stripShellPrefix
 } from './translate/bash.js'
 import { promptToPiMessage } from './translate/prompt.js'
 import { loadSlashCommands, parseCommandArgs, toAvailableCommands } from './slash-commands.js'
@@ -1025,7 +1026,7 @@ export class PiAcpAgent implements ACPAgent {
             update: {
               sessionUpdate: 'tool_call',
               toolCallId,
-              title: bashCommand(m) ?? toolName,
+              title: stripShellPrefix(bashCommand(m) ?? toolName, params.cwd),
               kind: 'execute',
               status: 'completed',
               content: bashTerminalContent(toolCallId),

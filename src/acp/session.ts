@@ -24,7 +24,8 @@ import {
   bashTerminalExitMeta,
   bashTerminalInfoMeta,
   bashTerminalOutputMeta,
-  isBashTool
+  isBashTool,
+  stripShellPrefix
 } from './translate/bash.js'
 import { toolResultToText } from './translate/pi-tools.js'
 import { buildUsageUpdateFromStats, buildUsageUpdateFromTurnUsage } from './usage.js'
@@ -513,7 +514,7 @@ export class PiAcpSession {
     this.emit({
       sessionUpdate: params.sessionUpdate,
       toolCallId: params.toolCallId,
-      title: bashCommand(params.args) ?? params.toolName,
+      title: stripShellPrefix(bashCommand(params.args) ?? params.toolName, this.cwd),
       kind: 'execute',
       status: params.status,
       locations: params.locations,

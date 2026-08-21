@@ -1,4 +1,5 @@
 import type { ToolCallContent } from '@agentclientprotocol/sdk'
+import { resolve as resolvePath } from 'node:path'
 
 type BashCommandRecord = {
   command?: unknown
@@ -40,7 +41,52 @@ export function bashCommand(value: unknown): string | undefined {
     record?.details?.command ??
     record?.details?.cmd
 
-  return typeof command === 'string' && command.trim() ? command : undefined
+  return typeof command === 'string' && command.trim() ? stripShellPrefix(command) : undefined
+}
+
+/**
+ * Strip a leading `cd <dir> && <cmd>` (or `cd <dir>\n<cmd>`) wrapper so the
+ * tool-call title shows the real command. Mirrors codex-acp's CommandUtils.
+ * The full command is still preserved in rawInput.
+ *
+ * When `cwd` is provided and `cd` points at the same directory, the `cd`
+ * prefix is kept so the title makes the working directory explicit.
+ */
+export function stripShellPrefix(command: string, cwd?: string): string {
+  let withoutShell = command.replace(/^(?:\/bin\/)?(?:bash|zsh|sh)\s+(?:-[lc]+\s+)?/, '')
+  if (withoutShell.startsWith("'") && withoutShell.endsWith("'")) {
+    withoutShell = withoutShell.slice(1, -1)
+  }
+
+  const nl = withoutShell.indexOf('\n')
+  const firstLine = (nl === -1 ? withoutShell : withoutShell.slice(0, nl)).trim()
+  const rest = nl === -1 ? '' : withoutShell.slice(nl + 1)
+
+  // `cd <dir> && <inline rest>` — cd and the command share the first line.
+  const cdAnd = firstLine.match(/^cd\s+(\S[^&]*?)\s*&&\s*(.+)$/)
+  if (cdAnd && cdAnd[2]) {
+    const inline = cdAnd[2].trim()
+    if (cwd && isSameDir(cdAnd[1].trim(), cwd)) {
+      return firstLine
+    }
+    return rest ? `${inline}\n${rest}` : inline
+  }
+
+  // Bare `cd <dir>` on its own line — the command starts on the next line.
+  const cdOnly = firstLine.match(/^cd\s+(\S.*)$/)
+  if (cdOnly && rest.trim()) {
+    if (cwd && isSameDir(cdOnly[1].trim(), cwd)) {
+      return withoutShell
+    }
+    return rest.replace(/^\n+/, '')
+  }
+
+  return withoutShell
+}
+
+function isSameDir(a: string, b: string): boolean {
+  const normalize = (p: string) => p.replace(/\/+$/, '') || '/'
+  return normalize(resolvePath(a)) === normalize(resolvePath(b))
 }
 
 export function bashResultText(result: unknown): string {
