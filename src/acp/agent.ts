@@ -609,7 +609,13 @@ export class PiAcpAgent implements ACPAgent {
       const args = parseCommandArgs(argsString)
 
       if (cmd === 'compact') {
-        const customInstructions = args.join(' ').trim() || undefined
+        // Default instruction: preserve the memory system's operational
+        // instructions (curl endpoints, available_skills) in the summary so
+        // the LLM doesn't fall back to filesystem Read after compaction.
+        const defaultInstruction = 'Preserve any memory system instructions, API endpoints, and available skills listed in the conversation. These are operational context the agent needs to access its memory system after compaction.'
+        const customInstructions = args.join(' ').trim()
+          ? args.join(' ').trim()
+          : defaultInstruction
         let res: unknown
         try {
           res = await session.proc.compact(customInstructions)
