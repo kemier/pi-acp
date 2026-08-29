@@ -1161,8 +1161,32 @@ export class PiAcpAgent implements ACPAgent {
     })
 
     // Replay full conversation history.
-    const data = (await proc.getMessages()) as any
-    const messages = Array.isArray(data?.messages) ? data.messages : []
+    // Read the session JSONL file directly — the Pi process's getMessages()
+    // returns a format that doesn't include role fields (user/assistant/
+    // toolResult), so we cannot reconstruct the interleaved conversation
+    // from it. The JSONL has the full message structure.
+    let messages: any[] = []
+    try {
+      const fs = await import('node:fs')
+      const lines = fs.readFileSync(stored.sessionFile, 'utf-8').trim().split('\n')
+      for (const line of lines) {
+        try {
+          const entry = JSON.parse(line)
+          const msg = entry?.message ?? entry
+          if (msg?.role === 'user' || msg?.role === 'assistant' || msg?.role === 'toolResult') {
+            messages.push(msg)
+          }
+        } catch { /* skip malformed lines */ }
+      }
+    } catch (e) {
+      console.log(`[pi-acp] loadSession: failed to read session file ${stored.sessionFile}: ${e}`)
+    }
+
+    // Fallback: if the JSONL read yielded nothing, try getMessages()
+    if (messages.length === 0) {
+      const data = (await proc.getMessages()) as any
+      messages = Array.isArray(data?.messages) ? data.messages : []
+    }
 
     // Build a toolCallId → command map from assistant toolCall blocks so
     // replay can show the actual command instead of a "bash" stub.
