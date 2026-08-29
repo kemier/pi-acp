@@ -1188,17 +1188,21 @@ export class PiAcpAgent implements ACPAgent {
       messages = Array.isArray(data?.messages) ? data.messages : []
     }
 
-    // Build a toolCallId → command map from assistant toolCall blocks so
-    // replay can show the actual command instead of a "bash" stub.
-    const toolCallCommands = new Map<string, string>()
+    // Build a toolCallId → { name, arguments } map from assistant toolCall
+    // blocks so replay can show the actual tool name + arguments instead of
+    // a bare stub ("read", "bash", etc.).
+    const toolCallArgs = new Map<string, { name: string; arguments: Record<string, unknown> }>()
     for (const m of messages) {
       const role = String(m?.role ?? '')
       if (role !== 'assistant') continue
       const content = m?.content
       if (!Array.isArray(content)) continue
       for (const block of content) {
-        if (block?.type === 'toolCall' && block.name === 'bash' && typeof block.arguments?.command === 'string') {
-          toolCallCommands.set(String(block.id), block.arguments.command)
+        if (block?.type === 'toolCall' && block.id) {
+          toolCallArgs.set(String(block.id), {
+            name: String(block.name ?? ''),
+            arguments: (block.arguments ?? {}) as Record<string, unknown>,
+          })
         }
       }
     }
@@ -1240,7 +1244,7 @@ export class PiAcpAgent implements ACPAgent {
 
         if (isBash) {
           const text = bashResultText(m)
-          const fullCommand = bashCommand(m) ?? toolCallCommands.get(toolCallId) ?? toolName
+          const fullCommand = bashCommand(m) ?? toolCallArgs.get(toolCallId)?.arguments?.command as string ?? toolName
           await this.conn.sessionUpdate({
             sessionId: session.sessionId,
             update: {
@@ -1270,16 +1274,27 @@ export class PiAcpAgent implements ACPAgent {
           continue
         }
 
-        // Create a synthetic ACP tool call to render historic tool usage.
+        // Non-bash tool: build a meaningful title from the stored arguments
+        const args = toolCallArgs.get(toolCallId)?.arguments ?? {}
+        const path = typeof args.path === 'string' ? args.path : undefined
+        const pattern = typeof args.pattern === 'string' ? args.pattern : undefined
+        const query = typeof args.query === 'string' ? args.query : undefined
+        const displayTitle = path
+          ? `${toolName} ${path}`
+          : pattern
+            ? `${toolName} "${pattern}"`
+            : query
+              ? `${toolName} "${query}"`
+              : toolName
         await this.conn.sessionUpdate({
           sessionId: session.sessionId,
           update: {
             sessionUpdate: 'tool_call',
             toolCallId,
-            title: toolName,
+            title: displayTitle,
             kind: toolName === 'read' ? 'read' : toolName === 'write' || toolName === 'edit' ? 'edit' : 'other',
             status: 'completed',
-            rawInput: null,
+            rawInput: Object.keys(args).length > 0 ? args : null,
             rawOutput: m
           }
         })
