@@ -45,6 +45,20 @@ import { promptToPiMessage } from './translate/prompt.js'
 import { loadSlashCommands, parseCommandArgs, toAvailableCommands } from './slash-commands.js'
 import { getAgentDir, getEnableSkillCommands, getQuietStartup } from './pi-settings.js'
 import { toAvailableCommandsFromPiGetCommands } from './pi-commands.js'
+import {
+  GOAL_CONTROL_METHOD,
+  GOAL_MAX_CONTINUATIONS,
+  applyGoalCommand,
+  applyGoalControl,
+  goalContinuationPrompt,
+  goalKickoffPrompt,
+  goalPromptPrefix,
+  parseGoalCommand,
+  parseGoalControlParams,
+  parseGoalStatusTrailer,
+  withGoalStatus,
+  type GoalSnapshot
+} from './goal.js'
 import { maybeAuthRequiredError } from './auth-required.js'
 import { isAbsolute } from 'node:path'
 import { existsSync, readFileSync, realpathSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -276,6 +290,92 @@ export class PiAcpAgent implements ACPAgent {
       // fall through
     }
     return ''
+  }
+
+  /**
+   * Emit a session_info_update carrying the current goal snapshot in
+   * _meta.codex.goal so the client's goal chip stays in sync. A null snapshot
+   * clears the chip.
+   */
+  private async emitGoalUpdate(session: PiAcpSession, snapshot: GoalSnapshot | null): Promise<void> {
+    await this.conn.sessionUpdate({
+      sessionId: session.sessionId,
+      update: {
+        sessionUpdate: 'session_info_update',
+        _meta: { codex: { goal: snapshot } },
+        updatedAt: new Date().toISOString()
+      }
+    })
+  }
+
+  /**
+   * Handle a `/goal ...` slash command. Returns the ACP prompt response, or
+   * null when the command was not a goal command (caller continues).
+   */
+  private async handleGoalCommand(
+    session: PiAcpSession,
+    argsString: string
+  ): Promise<PromptResponse> {
+    const command = parseGoalCommand(argsString)
+    const result = applyGoalCommand(session.goalSnapshot, command)
+
+    if (result.changed) {
+      session.goalSnapshot = result.snapshot
+      await this.emitGoalUpdate(session, result.snapshot)
+    }
+
+    if (command.type === 'set') {
+      // Kick off the model turn toward the objective, then auto-continue until
+      // the model emits GOAL_STATUS complete/blocked (or the continuation cap).
+      const objective = command.objective
+      let snapshot = session.goalSnapshot
+      let lastAssistantText = ''
+      for (let i = 0; i < GOAL_MAX_CONTINUATIONS; i++) {
+        const promptText = i === 0
+          ? goalKickoffPrompt(objective)
+          : goalContinuationPrompt(objective)
+        await session.prompt(promptText)
+        lastAssistantText = session.lastTurnAssistantText || ''
+        const status = parseGoalStatusTrailer(lastAssistantText)
+        if (status) {
+          snapshot = snapshot ? withGoalStatus(snapshot, status) : snapshot
+          if (snapshot) {
+            session.goalSnapshot = snapshot
+            await this.emitGoalUpdate(session, snapshot)
+          }
+          break
+        }
+        if (i === GOAL_MAX_CONTINUATIONS - 1) {
+          // Cap reached without a terminal GOAL_STATUS; leave goal active.
+          await this.emitGoalUpdate(session, session.goalSnapshot)
+        }
+      }
+      return { stopReason: 'end_turn' }
+    }
+
+    if (command.type === 'status') {
+      // Report goal status as a chat message, no model turn.
+      await this.conn.sessionUpdate({
+        sessionId: session.sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: result.message }
+        }
+      })
+      return { stopReason: 'end_turn' }
+    }
+
+    // pause / resume / clear — snapshot already updated; no model turn.
+    if (result.changed) {
+      await this.conn.sessionUpdate({
+        sessionId: session.sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: result.message }
+        }
+      })
+    }
+    return { stopReason: 'end_turn' }
   }
 
   async initialize(params: InitializeRequest): Promise<InitializeResponse> {
@@ -952,9 +1052,34 @@ export class PiAcpAgent implements ACPAgent {
 
         return { stopReason: 'end_turn' }
       }
+
+      if (cmd === 'goal') {
+        return await this.handleGoalCommand(session, argsString)
+      }
     }
 
-    const result = await session.prompt(message, images)
+    // Inject the active goal as a prefix so the model keeps it in mind on
+    // normal (non-slash) prompts.
+    const goalPrefix = goalPromptPrefix(session.goalSnapshot)
+    const effectiveMessage = goalPrefix ? `${goalPrefix}\n\n${message}` : message
+
+    const result = await session.prompt(effectiveMessage, images)
+
+    // Auto-continue toward the active goal until the model emits GOAL_STATUS
+    // complete/blocked (or the continuation cap). Only for plain prompts, not
+    // slash commands (already handled above).
+    if (session.goalSnapshot?.status === 'active') {
+      const objective = session.goalSnapshot.objective
+      for (let i = 0; i < GOAL_MAX_CONTINUATIONS; i++) {
+        const status = parseGoalStatusTrailer(session.lastTurnAssistantText || '')
+        if (status) {
+          session.goalSnapshot = withGoalStatus(session.goalSnapshot, status)
+          await this.emitGoalUpdate(session, session.goalSnapshot)
+          break
+        }
+        await session.prompt(goalContinuationPrompt(objective))
+      }
+    }
 
     // ACP StopReason does not include "error"; if pi fails we map to end_turn for now,
     // unless we know this was a cancellation.
@@ -1282,7 +1407,37 @@ export class PiAcpAgent implements ACPAgent {
     }
 
     const configOptions = await emitConfigOptionsUpdate(this.conn, session.sessionId, session.proc)
+    // When pi's get_state is stale (it often reports the in-memory value as
+    // "off" right after setThinkingLevel), the freshly-set thought_level must
+    // still be reflected in the returned config so the client's selector
+    // updates immediately. Override the option's currentValue with the value
+    // we just applied.
+    if (configId === THOUGHT_LEVEL_CONFIG_ID) {
+      const tl = configOptions.find(option => option.id === THOUGHT_LEVEL_CONFIG_ID)
+      if (tl) tl.currentValue = params.value
+    }
     return { configOptions }
+  }
+
+  /**
+   * Handle ACP extension methods. Currently supports the goal-control method
+   * (_codex/session/goal_control) used by the client's goal chip buttons
+   * (pause / clear).
+   */
+  async extMethod(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (method === GOAL_CONTROL_METHOD) {
+      const parsed = parseGoalControlParams(params)
+      const session = await this.restoreSession(parsed.sessionId)
+      const result = applyGoalControl(session.goalSnapshot, parsed.action)
+      if (result.changed) {
+        session.goalSnapshot = result.snapshot
+        await this.emitGoalUpdate(session, result.snapshot)
+      }
+      return {}
+    }
+    // Unknown extension method — return empty object (no-op) rather than
+    // throwing, so clients that probe optional methods don't break.
+    return {}
   }
 }
 

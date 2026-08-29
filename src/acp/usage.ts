@@ -3,7 +3,7 @@
 export type UsageUpdatePayload = {
   used: number
   size: number
-  cost?: { amount: number; currency?: string }
+  cost?: { amount: number; currency: string }
 }
 
 export function tokensFromUsage(usage: unknown): number | null {

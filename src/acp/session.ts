@@ -905,6 +905,29 @@ export class PiAcpSession {
         break
       }
 
+      case 'auto_compaction_start': {
+        this.emit({
+          sessionUpdate: 'agent_message_chunk',
+          content: {
+            type: 'text',
+            text: 'Context nearing limit, running automatic compaction...'
+          }
+        })
+        break
+      }
+
+      case 'auto_compaction_end': {
+        this.emit({
+          sessionUpdate: 'agent_message_chunk',
+          content: {
+            type: 'text',
+            text: 'Automatic compaction finished; context was summarized to continue the session.'
+          }
+        })
+        void this.publishUsageUpdate()
+        break
+      }
+
       case 'agent_start': {
         this.inAgentLoop = true
         break
