@@ -631,22 +631,12 @@ export class PiAcpAgent implements ACPAgent {
         const r: any = res && typeof res === 'object' ? (res as any) : null
         const tokensBefore = typeof r?.tokensBefore === 'number' ? r.tokensBefore : null
         const estimatedTokensAfter = typeof r?.estimatedTokensAfter === 'number' ? r.estimatedTokensAfter : null
-        const summary = typeof r?.summary === 'string' ? r.summary : null
 
-        const headerLines = [
-          `Compaction completed.${customInstructions ? ' (custom instructions applied)' : ''}`,
-          tokensBefore !== null ? `Tokens before: ${tokensBefore}` : null
-        ].filter(Boolean)
-
-        const text = headerLines.join('\n') + (summary ? `\n\n${summary}` : '')
-
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: 'agent_message_chunk',
-            content: { type: 'text', text }
-          }
-        })
+        // Do NOT emit an agent_message_chunk here — the tool_call events
+        // ("Context compacting" → "Context compacted") are already emitted
+        // by the session's event handler. Emitting a text summary would
+        // appear as an assistant message in the UI, unlike Codex which
+        // silently compacts without generating an LLM response.
 
         // Emit a usage_update with the post-compaction estimate so the
         // webview's context ring drops immediately. Pi's getSessionStats()
