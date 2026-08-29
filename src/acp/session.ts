@@ -511,13 +511,15 @@ export class PiAcpSession {
     includeTerminal: boolean
   }): void {
     this.bashToolCallIds.add(params.toolCallId)
+    const fullCommand = bashCommand(params.args) ?? params.toolName
     this.emit({
       sessionUpdate: params.sessionUpdate,
       toolCallId: params.toolCallId,
-      title: stripShellPrefix(bashCommand(params.args) ?? params.toolName, this.cwd),
+      title: stripShellPrefix(fullCommand, this.cwd),
       kind: 'execute',
       status: params.status,
       locations: params.locations,
+      rawInput: { command: fullCommand },
       ...(params.includeTerminal ? { content: bashTerminalContent(params.toolCallId) } : {}),
       ...(params.includeTerminal ? { _meta: bashTerminalInfoMeta(params.toolCallId, this.cwd) } : {})
     })
