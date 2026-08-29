@@ -62,6 +62,22 @@ type AdvertisedModel = {
 const MODEL_CONFIG_ID = 'model'
 const THOUGHT_LEVEL_CONFIG_ID = 'thought_level'
 
+/**
+ * True when the model id names a vision-capable model. Pi does not expose
+ * per-model input modalities through its ACP adapter (AdvertisedModel carries
+ * only modelId/name/description), so we derive image support from the model id
+ * — mirroring how vscode-acp derives it for ericli/kiro. Matches the common
+ * multimodal providers/models (Claude, GPT-4o/4.1/5, Gemini, Qwen-VL, LLaVA,
+ * GLM-4V, Phi-3-Vision, etc.). Unknown models default to text-only so the
+ * client hides the image attach button rather than letting a text-only model
+ * receive an image prompt.
+ */
+function modelSupportsImage(modelId: string): boolean {
+  const id = String(modelId ?? '').toLowerCase()
+  if (!id) return false
+  return /(^|[^a-z])(claude|gpt-4o|gpt-4\.1|gpt-5|gemini|qwen.*vl|llava|glm-4v|phi-3-vision|o1|o3|o4)/i.test(id)
+}
+
 function builtinAvailableCommands(): AvailableCommand[] {
   return [
     {
@@ -233,6 +249,33 @@ export class PiAcpAgent implements ACPAgent {
     } finally {
       this.restoringSessions.delete(sessionId)
     }
+  }
+
+  /**
+   * Best-effort current model id for a session, as "provider/id" (e.g.
+   * "anthropic/claude-3-5-sonnet"). Queries pi's get_state; falls back to the
+   * first available model, then "" if unknown. Used to gate image prompts on
+   * text-only models.
+   */
+  private async currentModelId(session: PiAcpSession): Promise<string> {
+    try {
+      const state = (await session.proc.getState()) as any
+      const provider = String(state?.model?.provider ?? '').trim()
+      const id = String(state?.model?.id ?? '').trim()
+      if (provider && id) return `${provider}/${id}`
+    } catch {
+      // fall through
+    }
+    // Fallback: first available model.
+    try {
+      const data = (await session.proc.getAvailableModels()) as any
+      const models: any[] = Array.isArray(data?.models) ? data.models : []
+      const first = models.find(m => m?.provider && m?.id)
+      if (first) return `${String(first.provider).trim()}/${String(first.id).trim()}`
+    } catch {
+      // fall through
+    }
+    return ''
   }
 
   async initialize(params: InitializeRequest): Promise<InitializeResponse> {
@@ -440,6 +483,18 @@ export class PiAcpAgent implements ACPAgent {
     const session = await this.restoreSession(params.sessionId)
 
     const { message, images } = promptToPiMessage(params.prompt)
+
+    // Reject image prompts when the active model is text-only (mirrors
+    // codex-acp's supportedInputModalities gate). Pi does not expose per-model
+    // modalities, so we derive image support from the model id.
+    if (images.length > 0) {
+      const currentModelId = await this.currentModelId(session)
+      if (!modelSupportsImage(currentModelId)) {
+        throw RequestError.invalidRequest(
+          `The current model (${currentModelId || 'unknown'}) does not support image input`
+        )
+      }
+    }
 
     // Built-in ACP slash command handling (headless-friendly subset).
     // Note: file-based slash commands are expanded inside session.prompt().
