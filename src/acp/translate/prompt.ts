@@ -16,6 +16,10 @@ export function promptToPiMessage(blocks: ContentBlock[]): {
   for (const b of blocks) {
     switch (b.type) {
       case 'text':
+        // Use a newline separator between text blocks so slash command
+        // detection (which checks the first line) works correctly when
+        // vscode-acp appends <agent-memory> as a separate block.
+        if (message.length > 0) message += '\n'
         message += b.text
         break
 
