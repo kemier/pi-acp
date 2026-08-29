@@ -1201,15 +1201,17 @@ export class PiAcpAgent implements ACPAgent {
 
         if (isBash) {
           const text = bashResultText(m)
+          const fullCommand = bashCommand(m) ?? toolName
           await this.conn.sessionUpdate({
             sessionId: session.sessionId,
             update: {
               sessionUpdate: 'tool_call',
               toolCallId,
-              title: stripShellPrefix(bashCommand(m) ?? toolName, params.cwd),
+              title: stripShellPrefix(fullCommand, params.cwd),
               kind: 'execute',
               status: 'completed',
               content: bashTerminalContent(toolCallId),
+              rawInput: { command: fullCommand },
               _meta: bashTerminalInfoMeta(toolCallId, params.cwd)
             }
           })
