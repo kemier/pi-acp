@@ -598,8 +598,11 @@ export class PiAcpAgent implements ACPAgent {
 
     // Built-in ACP slash command handling (headless-friendly subset).
     // Note: file-based slash commands are expanded inside session.prompt().
+    // Use only the first line for command detection — memory blocks appended
+    // by vscode-acp (commit 33abee7) are on subsequent lines.
     if (images.length === 0 && message.trimStart().startsWith('/')) {
-      const trimmed = message.trim()
+      const firstLine = message.trim().split('\n')[0].trim()
+      const trimmed = firstLine
       const space = trimmed.indexOf(' ')
       const cmd = space === -1 ? trimmed.slice(1) : trimmed.slice(1, space)
       const argsString = space === -1 ? '' : trimmed.slice(space + 1)
