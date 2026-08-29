@@ -903,7 +903,31 @@ export class PiAcpSession {
           _meta: { contextCompaction: true }
         })
         this.compactionToolCallId = null
-        void this.publishUsageUpdate()
+        // Emit a usage_update with the post-compaction estimate so the
+        // webview's context ring drops immediately. Pi's getSessionStats()
+        // returns tokens: null until the next LLM response, so without this
+        // the ring stays at the pre-compaction percentage.
+        const result = (ev as any).result as any
+        const estimatedAfter = typeof result?.estimatedTokensAfter === 'number' ? result.estimatedTokensAfter : null
+        if (estimatedAfter !== null) {
+          void (async () => {
+            try {
+              const state = (await this.proc.getState()) as any
+              const cw = typeof state?.model?.contextWindow === 'number' ? state.model.contextWindow : null
+              if (cw && cw > 0) {
+                this.emit({
+                  sessionUpdate: 'usage_update',
+                  used: estimatedAfter,
+                  size: cw
+                })
+              }
+            } catch {
+              // Best effort
+            }
+          })()
+        } else {
+          void this.publishUsageUpdate()
+        }
         break
       }
 

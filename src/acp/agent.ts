@@ -627,6 +627,7 @@ export class PiAcpAgent implements ACPAgent {
 
         const r: any = res && typeof res === 'object' ? (res as any) : null
         const tokensBefore = typeof r?.tokensBefore === 'number' ? r.tokensBefore : null
+        const estimatedTokensAfter = typeof r?.estimatedTokensAfter === 'number' ? r.estimatedTokensAfter : null
         const summary = typeof r?.summary === 'string' ? r.summary : null
 
         const headerLines = [
@@ -643,6 +644,29 @@ export class PiAcpAgent implements ACPAgent {
             content: { type: 'text', text }
           }
         })
+
+        // Emit a usage_update with the post-compaction estimate so the
+        // webview's context ring drops immediately. Pi's getSessionStats()
+        // returns tokens: null until the next LLM response, so without this
+        // the ring stays at the pre-compaction percentage.
+        if (estimatedTokensAfter !== null) {
+          try {
+            const state = (await session.proc.getState()) as any
+            const cw = typeof state?.model?.contextWindow === 'number' ? state.model.contextWindow : null
+            if (cw && cw > 0) {
+              await this.conn.sessionUpdate({
+                sessionId: session.sessionId,
+                update: {
+                  sessionUpdate: 'usage_update',
+                  used: estimatedTokensAfter,
+                  size: cw
+                }
+              })
+            }
+          } catch {
+            // Best effort — don't fail the turn.
+          }
+        }
 
         return { stopReason: 'end_turn' }
       }
