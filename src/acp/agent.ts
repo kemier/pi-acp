@@ -1164,6 +1164,21 @@ export class PiAcpAgent implements ACPAgent {
     const data = (await proc.getMessages()) as any
     const messages = Array.isArray(data?.messages) ? data.messages : []
 
+    // Build a toolCallId → command map from assistant toolCall blocks so
+    // replay can show the actual command instead of a "bash" stub.
+    const toolCallCommands = new Map<string, string>()
+    for (const m of messages) {
+      const role = String(m?.role ?? '')
+      if (role !== 'assistant') continue
+      const content = m?.content
+      if (!Array.isArray(content)) continue
+      for (const block of content) {
+        if (block?.type === 'toolCall' && block.name === 'bash' && typeof block.arguments?.command === 'string') {
+          toolCallCommands.set(String(block.id), block.arguments.command)
+        }
+      }
+    }
+
     for (const m of messages) {
       const role = String(m?.role ?? '')
 
@@ -1201,7 +1216,7 @@ export class PiAcpAgent implements ACPAgent {
 
         if (isBash) {
           const text = bashResultText(m)
-          const fullCommand = bashCommand(m) ?? toolName
+          const fullCommand = bashCommand(m) ?? toolCallCommands.get(toolCallId) ?? toolName
           await this.conn.sessionUpdate({
             sessionId: session.sessionId,
             update: {
