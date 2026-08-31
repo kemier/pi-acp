@@ -1146,6 +1146,14 @@ export class PiAcpAgent implements ACPAgent {
     const stopReason: StopReason =
       result === 'error' ? (session.wasCancelRequested() ? 'cancelled' : 'end_turn') : result
 
+    // Save slot KV cache after each successful prompt (fire-and-forget).
+    // This ensures the KV on disk is always up-to-date, so if VS Code
+    // restarts and the Pi process is killed without a graceful dispose,
+    // the next resume can restore from the last saved state.
+    if (isSlotCacheEnabled() && stopReason === 'end_turn') {
+      void this.saveSessionSlot(params.sessionId)
+    }
+
     return { stopReason }
   }
 
