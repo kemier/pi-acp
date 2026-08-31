@@ -10,6 +10,10 @@
  *   - PI_SLOT_CACHE_ENABLED env var set to "true" (feature gate)
  */
 
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
 const SAVE_TIMEOUT_MS = 30_000
 const RESTORE_TIMEOUT_MS = 60_000
 
@@ -32,11 +36,8 @@ function getLlamaServerUrl(): string | null {
   // Fallback: read from Pi models.json — look for the "vllm" provider
   // (the direct llama.cpp endpoint, not the vllm-proxy).
   try {
-    const os = require('node:os')
-    const path = require('node:path')
-    const fs = require('node:fs')
-    const modelsPath = path.join(os.homedir(), '.pi', 'agent', 'models.json')
-    const raw = fs.readFileSync(modelsPath, 'utf-8')
+    const modelsPath = join(homedir(), '.pi', 'agent', 'models.json')
+    const raw = readFileSync(modelsPath, 'utf-8')
     const models = JSON.parse(raw)
     const providers = models.providers ?? {}
     // Prefer the provider named "vllm" (direct llama.cpp), not "vllm-proxy"
