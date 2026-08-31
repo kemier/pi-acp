@@ -185,8 +185,8 @@ export class PiAcpAgent implements ACPAgent {
     }
   }
 
-  /** Attempt to restore the llama-server slot KV cache for a session (fire-and-forget). */
-  private async tryRestoreSlot(sessionId: string): Promise<void> {
+  /** Attempt to restore the llama-server slot KV cache for a session. */
+  private async tryRestoreSlot(sessionId: string): Promise<{ success: boolean; elapsedMs: number }> {
     try {
       const filename = `${sessionId}.bin`
       const result = await restoreSlotCache(0, filename)
@@ -197,8 +197,10 @@ export class PiAcpAgent implements ACPAgent {
         // This is expected; the normal prefill path will handle it.
         console.log(`[pi-acp] slot-cache: restore skipped session=${sessionId}: ${result.error}`)
       }
+      return { success: result.success, elapsedMs: result.elapsedMs }
     } catch (e: any) {
       console.log(`[pi-acp] slot-cache: restore error session=${sessionId}: ${e?.message ?? e}`)
+      return { success: false, elapsedMs: 0 }
     }
   }
 
@@ -1199,12 +1201,20 @@ export class PiAcpAgent implements ACPAgent {
       throw RequestError.invalidParams(`Unknown sessionId: ${params.sessionId}`)
     }
 
-    // Attempt slot KV cache restore (best-effort, non-blocking).
-    // If the saved KV matches the session, llama-server will skip the full
-    // prefill on the first prompt. If the file doesn't exist or is stale,
-    // the restore fails silently and we fall back to normal prefill.
+    // Attempt slot KV cache restore (best-effort, awaited).
+    // If the saved KV matches the session, llama-server's slot-prompt-similarity
+    // (default 0.10) will reuse the restored KV and skip the full prefill on
+    // the first prompt. If the file doesn't exist or is stale, the restore fails
+    // silently and we fall back to normal prefill.
     if (isSlotCacheEnabled()) {
-      void this.tryRestoreSlot(params.sessionId)
+      try {
+        const result = await this.tryRestoreSlot(params.sessionId)
+        if (result.success) {
+          console.log(`[pi-acp] slot-cache: restored session=${params.sessionId} in ${result.elapsedMs}ms`)
+        }
+      } catch {
+        // best-effort — never block the load
+      }
     }
 
     const enableSkillCommands = getEnableSkillCommands(params.cwd)
