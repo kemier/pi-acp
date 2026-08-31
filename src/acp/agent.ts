@@ -28,6 +28,7 @@ import { SessionManager, type PiAcpSession } from './session.js'
 import { SessionStore } from './session-store.js'
 import { PiRpcProcess } from '../pi-rpc/process.js'
 import { listPiSessions, findPiSession } from './pi-sessions.js'
+import { saveSlotCache, restoreSlotCache, isSlotCacheEnabled } from './slot-cache.js'
 import { normalizePiAssistantText, normalizePiMessageText } from './translate/pi-messages.js'
 import { toolResultToText } from './translate/pi-tools.js'
 import {
@@ -158,7 +159,47 @@ export class PiAcpAgent implements ACPAgent {
   private readonly restoringSessions = new Map<string, Promise<PiAcpSession>>()
 
   dispose(): void {
+    // Save slot KV cache before tearing down all sessions.
+    // Fire-and-forget — save is best-effort and shouldn't block dispose.
+    if (isSlotCacheEnabled()) {
+      for (const [id] of (this.sessions as any).sessions ?? []) {
+        const s = (this.sessions as any).maybeGet?.(id)
+        if (s) this.saveSessionSlot(id).catch(() => {})
+      }
+    }
     this.sessions.disposeAll()
+  }
+
+  /** Save the llama-server slot KV cache for a session (fire-and-forget). */
+  private async saveSessionSlot(sessionId: string): Promise<void> {
+    try {
+      const filename = `${sessionId}.bin`
+      const result = await saveSlotCache(0, filename)
+      if (result.success) {
+        console.log(`[pi-acp] slot-cache: saved session=${sessionId} tokens=${result.nTokens} file=${result.fileBytes}B (${result.elapsedMs}ms)`)
+      } else {
+        console.log(`[pi-acp] slot-cache: save failed session=${sessionId}: ${result.error}`)
+      }
+    } catch (e: any) {
+      console.log(`[pi-acp] slot-cache: save error session=${sessionId}: ${e?.message ?? e}`)
+    }
+  }
+
+  /** Attempt to restore the llama-server slot KV cache for a session (fire-and-forget). */
+  private async tryRestoreSlot(sessionId: string): Promise<void> {
+    try {
+      const filename = `${sessionId}.bin`
+      const result = await restoreSlotCache(0, filename)
+      if (result.success) {
+        console.log(`[pi-acp] slot-cache: restored session=${sessionId} tokens=${result.nTokens} file=${result.fileBytes}B (${result.elapsedMs}ms)`)
+      } else {
+        // Restore failed — file may not exist (first session) or is stale.
+        // This is expected; the normal prefill path will handle it.
+        console.log(`[pi-acp] slot-cache: restore skipped session=${sessionId}: ${result.error}`)
+      }
+    } catch (e: any) {
+      console.log(`[pi-acp] slot-cache: restore error session=${sessionId}: ${e?.message ?? e}`)
+    }
   }
 
   // Remember recent session cwd and use it as the default filter.
@@ -1158,6 +1199,14 @@ export class PiAcpAgent implements ACPAgent {
       throw RequestError.invalidParams(`Unknown sessionId: ${params.sessionId}`)
     }
 
+    // Attempt slot KV cache restore (best-effort, non-blocking).
+    // If the saved KV matches the session, llama-server will skip the full
+    // prefill on the first prompt. If the file doesn't exist or is stale,
+    // the restore fails silently and we fall back to normal prefill.
+    if (isSlotCacheEnabled()) {
+      void this.tryRestoreSlot(params.sessionId)
+    }
+
     const enableSkillCommands = getEnableSkillCommands(params.cwd)
     const session = await this.restoreSession(params.sessionId, {
       cwd: params.cwd,
@@ -1387,6 +1436,11 @@ export class PiAcpAgent implements ACPAgent {
     // https://agentclientprotocol.com/protocol/v2/session-delete#semantics
     if (!stored && !piSession) {
       return {}
+    }
+
+    // Save slot KV cache before deleting (best-effort).
+    if (isSlotCacheEnabled()) {
+      void this.saveSessionSlot(params.sessionId)
     }
 
     const sessionFile = stored?.sessionFile ?? piSession?.sessionFile
