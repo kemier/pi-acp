@@ -176,12 +176,12 @@ export class PiAcpAgent implements ACPAgent {
       const filename = `${sessionId}.bin`
       const result = await saveSlotCache(0, filename)
       if (result.success) {
-        console.log(`[pi-acp] slot-cache: saved session=${sessionId} tokens=${result.nTokens} file=${result.fileBytes}B (${result.elapsedMs}ms)`)
+        console.error(`[pi-acp] slot-cache: saved session=${sessionId} tokens=${result.nTokens} file=${result.fileBytes}B (${result.elapsedMs}ms)`)
       } else {
-        console.log(`[pi-acp] slot-cache: save failed session=${sessionId}: ${result.error}`)
+        console.error(`[pi-acp] slot-cache: save failed session=${sessionId}: ${result.error}`)
       }
     } catch (e: any) {
-      console.log(`[pi-acp] slot-cache: save error session=${sessionId}: ${e?.message ?? e}`)
+      console.error(`[pi-acp] slot-cache: save error session=${sessionId}: ${e?.message ?? e}`)
     }
   }
 
@@ -191,15 +191,15 @@ export class PiAcpAgent implements ACPAgent {
       const filename = `${sessionId}.bin`
       const result = await restoreSlotCache(0, filename)
       if (result.success) {
-        console.log(`[pi-acp] slot-cache: restored session=${sessionId} tokens=${result.nTokens} file=${result.fileBytes}B (${result.elapsedMs}ms)`)
+        console.error(`[pi-acp] slot-cache: restored session=${sessionId} tokens=${result.nTokens} file=${result.fileBytes}B (${result.elapsedMs}ms)`)
       } else {
         // Restore failed — file may not exist (first session) or is stale.
         // This is expected; the normal prefill path will handle it.
-        console.log(`[pi-acp] slot-cache: restore skipped session=${sessionId}: ${result.error}`)
+        console.error(`[pi-acp] slot-cache: restore skipped session=${sessionId}: ${result.error}`)
       }
       return { success: result.success, elapsedMs: result.elapsedMs }
     } catch (e: any) {
-      console.log(`[pi-acp] slot-cache: restore error session=${sessionId}: ${e?.message ?? e}`)
+      console.error(`[pi-acp] slot-cache: restore error session=${sessionId}: ${e?.message ?? e}`)
       return { success: false, elapsedMs: 0 }
     }
   }
