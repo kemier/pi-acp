@@ -51,6 +51,12 @@ const stream = ndJsonStream(input, output)
 
 const agent = new AgentSideConnection(conn => new PiAcpAgent(conn), stream)
 
+// Startup diagnostic: log slot-cache env vars so we can verify they reached
+// the process. Visible in the ACP Traffic log (stderr is forwarded).
+if (process.env.PI_SLOT_CACHE_ENABLED) {
+  console.error(`[pi-acp] slot-cache: enabled=true url=${process.env.PI_LLAMA_SERVER_URL ?? '(from models.json)'}`)
+}
+
 function shutdown() {
   try {
     // Best-effort: dispose session subprocesses when the client disconnects.
