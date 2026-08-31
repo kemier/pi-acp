@@ -28,7 +28,7 @@ import { SessionManager, type PiAcpSession } from './session.js'
 import { SessionStore } from './session-store.js'
 import { PiRpcProcess } from '../pi-rpc/process.js'
 import { listPiSessions, findPiSession } from './pi-sessions.js'
-import { saveSlotCache, restoreSlotCache, isSlotCacheEnabled } from './slot-cache.js'
+import { saveSlotCache, restoreSlotCache, isSlotCacheEnabled, getSlotInfo } from './slot-cache.js'
 import { normalizePiAssistantText, normalizePiMessageText } from './translate/pi-messages.js'
 import { toolResultToText } from './translate/pi-tools.js'
 import {
@@ -188,6 +188,14 @@ export class PiAcpAgent implements ACPAgent {
   /** Attempt to restore the llama-server slot KV cache for a session. */
   private async tryRestoreSlot(sessionId: string): Promise<{ success: boolean; elapsedMs: number }> {
     try {
+      // Only restore if the slot is empty (no prompt has been sent yet).
+      // If the slot already has tokens, the restore will fail with 400.
+      const slotInfo = await getSlotInfo(0)
+      if (slotInfo && slotInfo.nPromptTokens > 1000) {
+        console.error(`[pi-acp] slot-cache: restore skipped session=${sessionId}: slot has ${slotInfo.nPromptTokens} tokens (not empty)`)
+        return { success: false, elapsedMs: 0 }
+      }
+
       const filename = `${sessionId}.bin`
       const result = await restoreSlotCache(0, filename)
       if (result.success) {
