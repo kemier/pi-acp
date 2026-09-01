@@ -1,5 +1,5 @@
 import type { ToolCallContent } from '@agentclientprotocol/sdk'
-import { resolve as resolvePath } from 'node:path'
+import { isAbsolute as isAbsolutePath, relative as relativePath, resolve as resolvePath } from 'node:path'
 
 type BashCommandRecord = {
   command?: unknown
@@ -49,8 +49,13 @@ export function bashCommand(value: unknown): string | undefined {
  * tool-call title shows the real command. Mirrors codex-acp's CommandUtils.
  * The full command is still preserved in rawInput.
  *
- * When `cwd` is provided and `cd` points at the same directory, the `cd`
- * prefix is kept so the title makes the working directory explicit.
+ * What happens to the `cd` depends on where it points, relative to `cwd`:
+ *  - the session cwd itself -> STRIPPED (that is where commands run anyway)
+ *  - a directory INSIDE the cwd -> KEPT, rewritten relative ("cd src/ui && ...")
+ *  - anywhere else -> STRIPPED (the command is the interesting part)
+ *
+ * Kept in sync with vscode-acp's src/utils/toolTitle.ts and codex-acp /
+ * claude-code-acp, so the client's own normalization is a no-op here.
  */
 export function stripShellPrefix(command: string, cwd?: string): string {
   let withoutShell = command.replace(/^(?:\/bin\/)?(?:bash|zsh|sh)\s+(?:-[lc]+\s+)?/, '')
@@ -62,12 +67,15 @@ export function stripShellPrefix(command: string, cwd?: string): string {
   const firstLine = (nl === -1 ? withoutShell : withoutShell.slice(0, nl)).trim()
   const rest = nl === -1 ? '' : withoutShell.slice(nl + 1)
 
-  // `cd <dir> && <inline rest>` — cd and the command share the first line.
-  const cdAnd = firstLine.match(/^cd\s+(\S[^&]*?)\s*&&\s*(.+)$/)
-  if (cdAnd && cdAnd[2]) {
-    const inline = cdAnd[2].trim()
-    if (cwd && isSameDir(cdAnd[1].trim(), cwd)) {
-      return firstLine
+  // `cd <dir> && <cmd>` / `cd <dir>; <cmd>` — cd and the command share the
+  // first line. Both separators occur in agent output.
+  const cdAnd = firstLine.match(/^cd\s+(\S[^;&]*?)\s*(&&|;)\s*(.+)$/)
+  if (cdAnd && cdAnd[3]) {
+    const inline = cdAnd[3].trim()
+    const sub = subdirOfCwd(cdAnd[1].trim(), cwd)
+    if (sub) {
+      const joined = `cd ${sub}${cdAnd[2] === ';' ? ';' : ' &&'} ${inline}`
+      return rest ? `${joined}\n${rest}` : joined
     }
     return rest ? `${inline}\n${rest}` : inline
   }
@@ -75,18 +83,30 @@ export function stripShellPrefix(command: string, cwd?: string): string {
   // Bare `cd <dir>` on its own line — the command starts on the next line.
   const cdOnly = firstLine.match(/^cd\s+(\S.*)$/)
   if (cdOnly && rest.trim()) {
-    if (cwd && isSameDir(cdOnly[1].trim(), cwd)) {
-      return withoutShell
-    }
+    // Always stripped, even for a subdirectory: clients render only the FIRST
+    // line of a title, so keeping 'cd src' would hide the command.
     return rest.replace(/^\n+/, '')
   }
 
   return withoutShell
 }
 
-function isSameDir(a: string, b: string): boolean {
-  const normalize = (p: string) => p.replace(/\/+$/, '') || '/'
-  return normalize(resolvePath(a)) === normalize(resolvePath(b))
+/**
+ * Relative path when `target` is a directory INSIDE `cwd`, else null. A relative
+ * target resolves against `cwd`, never process.cwd(), so re-applying this to an
+ * already-normalized title is a no-op.
+ */
+function subdirOfCwd(target: string, cwd?: string): string | null {
+  if (!cwd) return null
+  try {
+    const base = resolvePath(cwd)
+    const abs = isAbsolutePath(target) ? resolvePath(target) : resolvePath(base, target)
+    const rel = relativePath(base, abs)
+    if (!rel || rel === '.' || rel.startsWith('..') || isAbsolutePath(rel)) return null
+    return rel
+  } catch {
+    return null
+  }
 }
 
 export function bashResultText(result: unknown): string {

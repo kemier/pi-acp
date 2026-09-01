@@ -20,21 +20,27 @@ test('formatToolTitle: bash strips cd prefix', () => {
   assert.equal(formatToolTitle('bash', { command: 'cd /tmp' }), 'cd /tmp')
 })
 
-test('stripShellPrefix: keeps cd when it matches cwd', () => {
-  assert.equal(
-    stripShellPrefix('cd /workspace/git/ezennin/pi-acp && npm test', '/workspace/git/ezennin/pi-acp'),
-    'cd /workspace/git/ezennin/pi-acp && npm test'
-  )
-  assert.equal(
-    stripShellPrefix('cd /workspace/git/ezennin/pi-acp\nnpm test', '/workspace/git/ezennin/pi-acp/'),
-    'cd /workspace/git/ezennin/pi-acp\nnpm test'
-  )
-  assert.equal(
-    stripShellPrefix('cd /workspace/git/ezennin/pi-acp && npm test', '/tmp'),
-    'npm test'
-  )
-  assert.equal(
-    stripShellPrefix("bash -c 'cd /workspace && ls -la'", '/workspace'),
-    'cd /workspace && ls -la'
-  )
+const CWD = '/workspace/git/ezennin/pi-acp'
+
+test('stripShellPrefix: strips the cd when it targets the session cwd', () => {
+  // The session already runs there — the title should show the work instead.
+  assert.equal(stripShellPrefix(`cd ${CWD} && npm test`, CWD), 'npm test')
+  assert.equal(stripShellPrefix(`cd ${CWD}\nnpm test`, `${CWD}/`), 'npm test')
+  assert.equal(stripShellPrefix(`cd ${CWD}; npm test`, CWD), 'npm test')
+  assert.equal(stripShellPrefix("bash -c 'cd /workspace && ls -la'", '/workspace'), 'ls -la')
+})
+
+test('stripShellPrefix: keeps a cd into a subdirectory, rewritten relative', () => {
+  assert.equal(stripShellPrefix(`cd ${CWD}/src && npm test`, CWD), 'cd src && npm test')
+  assert.equal(stripShellPrefix(`cd ${CWD}/src/acp; ls`, CWD), 'cd src/acp; ls')
+  // Newline form: stripped even for a subdirectory (clients render line 1 only).
+  assert.equal(stripShellPrefix(`cd ${CWD}/src\nnpm test`, CWD), 'npm test')
+})
+
+test('stripShellPrefix: strips a cd outside the cwd and stays idempotent', () => {
+  assert.equal(stripShellPrefix(`cd ${CWD} && npm test`, '/tmp'), 'npm test')
+  assert.equal(stripShellPrefix('cd /workspace/git/ezennin/codex-acp && ls', CWD), 'ls')
+  assert.equal(stripShellPrefix('cd ../codex-acp && ls', CWD), 'ls')
+  // Re-applying to an already-normalized title must keep the subdirectory.
+  assert.equal(stripShellPrefix('cd src && npm test', CWD), 'cd src && npm test')
 })
