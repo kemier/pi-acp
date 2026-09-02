@@ -501,6 +501,32 @@ export class PiAcpSession {
     await this.lastEmit
   }
 
+  /**
+   * Close a compaction row that pi never finished.
+   *
+   * `compaction_start` opens the row and `compaction_end` closes it. If the turn
+   * is cancelled or the subprocess errors in between, `compaction_end` never
+   * arrives and the IDE keeps a "Context compacting" spinner for the rest of the
+   * session. The same stranding was found in ericli, where a missing completion
+   * left the row spinning even though the work had finished 17s in — there the
+   * client had no way to tell, because the only frame it ever saw was in_progress.
+   *
+   * ACP has no cancelled tool status, so a cancelled or errored compaction is
+   * reported as failed and a merely missing end event as completed.
+   */
+  private closeStrandedCompactionRow(status: 'completed' | 'failed'): void {
+    if (!this.compactionToolCallId) return
+    const toolCallId = this.compactionToolCallId
+    this.compactionToolCallId = null
+    this.emit({
+      sessionUpdate: 'tool_call_update',
+      toolCallId,
+      title: status === 'failed' ? 'Context compaction interrupted' : 'Context compacted',
+      status,
+      _meta: { contextCompaction: true }
+    })
+  }
+
   private emitBashToolCall(params: {
     sessionUpdate: 'tool_call' | 'tool_call_update'
     toolCallId: string
@@ -578,6 +604,8 @@ export class PiAcpSession {
     this.proc.prompt(t.message, t.images).catch(err => {
       // If the subprocess errors before we get `agent_settled`, treat as error unless cancelled.
       // Also ensure we flush any already-enqueued updates first.
+      // A compaction row still open here will never be closed by pi.
+      this.closeStrandedCompactionRow('failed')
       void this.flushEmits().finally(() => {
         // If this looks like an auth/config issue, surface AUTH_REQUIRED so clients can offer terminal login.
         const authErr = maybeAuthRequiredError(err)
@@ -977,6 +1005,9 @@ export class PiAcpSession {
         // Ensure all updates derived from pi events are delivered before we resolve
         // the ACP `session/prompt` request.
         void this.publishUsageUpdate()
+        // Cancelled mid-compaction, or pi simply never sent compaction_end: either
+        // way the row must not outlive the turn.
+        this.closeStrandedCompactionRow(this.cancelRequested ? 'failed' : 'completed')
         void this.flushEmits().finally(() => {
           const reason: StopReason = this.cancelRequested ? 'cancelled' : 'end_turn'
           this.pendingTurn?.resolve(reason)

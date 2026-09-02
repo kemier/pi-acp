@@ -964,3 +964,50 @@ test('PiAcpSession: emits usage_update after agent_settled', async () => {
   assert.ok(last.used > 0)
   assert.equal(last.used, Math.min(last.used, last.size))
 })
+
+/**
+ * A compaction row must not outlive its turn.
+ *
+ * `compaction_start` opens the row and `compaction_end` closes it, but if the turn
+ * is cancelled or the subprocess errors in between, `compaction_end` never arrives
+ * and the IDE keeps a "Context compacting" spinner for the rest of the session.
+ * The same stranding was found in ericli, where the client only ever saw the
+ * in_progress frame even though the compaction had finished 17s in.
+ */
+test('PiAcpSession: closes a compaction row stranded by agent_settled', async () => {
+  const conn = new FakeAgentSideConnection()
+  const proc = new FakePiRpcProcess()
+
+  new PiAcpSession({
+    sessionId: 's1',
+    cwd: process.cwd(),
+    mcpServers: [],
+    proc: proc as any,
+    conn: asAgentConn(conn),
+    fileCommands: []
+  })
+
+  proc.emit({ type: 'compaction_start' } as any)
+  await new Promise(r => setTimeout(r, 0))
+  const opened = conn.updates.find(u => (u.update as any).sessionUpdate === 'tool_call')
+  assert.ok(opened, 'compaction_start should open a tool_call row')
+  const rowId = (opened!.update as any).toolCallId
+  assert.equal((opened!.update as any).status, 'in_progress')
+
+  // The turn settles without pi ever sending compaction_end.
+  proc.emit({ type: 'agent_settled' } as any)
+  await new Promise(r => setTimeout(r, 0))
+
+  const closed = conn.updates.filter(u => (u.update as any).sessionUpdate === 'tool_call_update')
+  assert.equal(closed.length, 1, 'the row must be closed exactly once')
+  assert.equal((closed[0]!.update as any).toolCallId, rowId, 'closed with the id that opened it')
+  assert.equal((closed[0]!.update as any).status, 'completed')
+
+  // And it must not be closed a second time on a later settle.
+  proc.emit({ type: 'agent_settled' } as any)
+  await new Promise(r => setTimeout(r, 0))
+  assert.equal(
+    conn.updates.filter(u => (u.update as any).sessionUpdate === 'tool_call_update').length,
+    1
+  )
+})
