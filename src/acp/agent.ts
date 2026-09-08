@@ -671,6 +671,11 @@ export class PiAcpAgent implements ACPAgent {
               sessionId: session.sessionId,
               update: {
                 sessionUpdate: 'agent_message_chunk',
+                // Transient SNAPSHOT (slash-command result / status notice), not
+                // conversation. Without the marker a client cannot tell it from the
+                // assistant's own text, so vscode-acp's compact mode folded it into the
+                // running turn's collapsed block instead of showing it by the command.
+                _meta: { commandOutput: true },
                 content: { type: 'text', text: 'No compaction needed — the session was just automatically compacted.' }
               }
             })
@@ -743,6 +748,11 @@ export class PiAcpAgent implements ACPAgent {
           sessionId: session.sessionId,
           update: {
             sessionUpdate: 'agent_message_chunk',
+            // Transient SNAPSHOT (slash-command result / status notice), not
+            // conversation. Without the marker a client cannot tell it from the
+            // assistant's own text, so vscode-acp's compact mode folded it into the
+            // running turn's collapsed block instead of showing it by the command.
+            _meta: { commandOutput: true },
             content: { type: 'text', text }
           }
         })
@@ -757,6 +767,11 @@ export class PiAcpAgent implements ACPAgent {
             sessionId: session.sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
+              // Transient SNAPSHOT (slash-command result / status notice), not
+              // conversation. Without the marker a client cannot tell it from the
+              // assistant's own text, so vscode-acp's compact mode folded it into the
+              // running turn's collapsed block instead of showing it by the command.
+              _meta: { commandOutput: true },
               content: { type: 'text', text: 'Usage: /name <name>' }
             }
           })
@@ -775,6 +790,11 @@ export class PiAcpAgent implements ACPAgent {
             sessionId: session.sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
+              // Transient SNAPSHOT (slash-command result / status notice), not
+              // conversation. Without the marker a client cannot tell it from the
+              // assistant's own text, so vscode-acp's compact mode folded it into the
+              // running turn's collapsed block instead of showing it by the command.
+              _meta: { commandOutput: true },
               content: { type: 'text', text: `Failed to set session name: ${msg}${hint}` }
             }
           })
@@ -794,6 +814,11 @@ export class PiAcpAgent implements ACPAgent {
           sessionId: session.sessionId,
           update: {
             sessionUpdate: 'agent_message_chunk',
+            // Transient SNAPSHOT (slash-command result / status notice), not
+            // conversation. Without the marker a client cannot tell it from the
+            // assistant's own text, so vscode-acp's compact mode folded it into the
+            // running turn's collapsed block instead of showing it by the command.
+            _meta: { commandOutput: true },
             content: { type: 'text', text: `Session name set: ${name}` }
           }
         })
@@ -812,6 +837,11 @@ export class PiAcpAgent implements ACPAgent {
             sessionId: session.sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
+              // Transient SNAPSHOT (slash-command result / status notice), not
+              // conversation. Without the marker a client cannot tell it from the
+              // assistant's own text, so vscode-acp's compact mode folded it into the
+              // running turn's collapsed block instead of showing it by the command.
+              _meta: { commandOutput: true },
               content: {
                 type: 'text',
                 text: `Steering mode: ${current || 'unknown'}`
@@ -826,6 +856,11 @@ export class PiAcpAgent implements ACPAgent {
             sessionId: session.sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
+              // Transient SNAPSHOT (slash-command result / status notice), not
+              // conversation. Without the marker a client cannot tell it from the
+              // assistant's own text, so vscode-acp's compact mode folded it into the
+              // running turn's collapsed block instead of showing it by the command.
+              _meta: { commandOutput: true },
               content: {
                 type: 'text',
                 text: 'Usage: /steering all | /steering one-at-a-time'
@@ -841,6 +876,11 @@ export class PiAcpAgent implements ACPAgent {
           sessionId: session.sessionId,
           update: {
             sessionUpdate: 'agent_message_chunk',
+            // Transient SNAPSHOT (slash-command result / status notice), not
+            // conversation. Without the marker a client cannot tell it from the
+            // assistant's own text, so vscode-acp's compact mode folded it into the
+            // running turn's collapsed block instead of showing it by the command.
+            _meta: { commandOutput: true },
             content: { type: 'text', text: `Steering mode set to: ${modeRaw}` }
           }
         })
@@ -859,6 +899,11 @@ export class PiAcpAgent implements ACPAgent {
             sessionId: session.sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
+              // Transient SNAPSHOT (slash-command result / status notice), not
+              // conversation. Without the marker a client cannot tell it from the
+              // assistant's own text, so vscode-acp's compact mode folded it into the
+              // running turn's collapsed block instead of showing it by the command.
+              _meta: { commandOutput: true },
               content: {
                 type: 'text',
                 text: `Follow-up mode: ${current || 'unknown'}`
@@ -873,6 +918,11 @@ export class PiAcpAgent implements ACPAgent {
             sessionId: session.sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
+              // Transient SNAPSHOT (slash-command result / status notice), not
+              // conversation. Without the marker a client cannot tell it from the
+              // assistant's own text, so vscode-acp's compact mode folded it into the
+              // running turn's collapsed block instead of showing it by the command.
+              _meta: { commandOutput: true },
               content: {
                 type: 'text',
                 text: 'Usage: /follow-up all | /follow-up one-at-a-time'
@@ -888,6 +938,11 @@ export class PiAcpAgent implements ACPAgent {
           sessionId: session.sessionId,
           update: {
             sessionUpdate: 'agent_message_chunk',
+            // Transient SNAPSHOT (slash-command result / status notice), not
+            // conversation. Without the marker a client cannot tell it from the
+            // assistant's own text, so vscode-acp's compact mode folded it into the
+            // running turn's collapsed block instead of showing it by the command.
+            _meta: { commandOutput: true },
             content: { type: 'text', text: `Follow-up mode set to: ${modeRaw}` }
           }
         })
@@ -938,6 +993,11 @@ export class PiAcpAgent implements ACPAgent {
             sessionId: session.sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
+              // Transient SNAPSHOT (slash-command result / status notice), not
+              // conversation. Without the marker a client cannot tell it from the
+              // assistant's own text, so vscode-acp's compact mode folded it into the
+              // running turn's collapsed block instead of showing it by the command.
+              _meta: { commandOutput: true },
               content: { type: 'text', text: "Changelog not found (couldn't locate pi installation)." }
             }
           })
@@ -952,6 +1012,11 @@ export class PiAcpAgent implements ACPAgent {
             sessionId: session.sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
+              // Transient SNAPSHOT (slash-command result / status notice), not
+              // conversation. Without the marker a client cannot tell it from the
+              // assistant's own text, so vscode-acp's compact mode folded it into the
+              // running turn's collapsed block instead of showing it by the command.
+              _meta: { commandOutput: true },
               content: { type: 'text', text: `Failed to read changelog: ${String(e?.message ?? e)}` }
             }
           })
@@ -966,6 +1031,11 @@ export class PiAcpAgent implements ACPAgent {
           sessionId: session.sessionId,
           update: {
             sessionUpdate: 'agent_message_chunk',
+            // Transient SNAPSHOT (slash-command result / status notice), not
+            // conversation. Without the marker a client cannot tell it from the
+            // assistant's own text, so vscode-acp's compact mode folded it into the
+            // running turn's collapsed block instead of showing it by the command.
+            _meta: { commandOutput: true },
             content: { type: 'text', text }
           }
         })
@@ -987,6 +1057,11 @@ export class PiAcpAgent implements ACPAgent {
             sessionId: session.sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
+              // Transient SNAPSHOT (slash-command result / status notice), not
+              // conversation. Without the marker a client cannot tell it from the
+              // assistant's own text, so vscode-acp's compact mode folded it into the
+              // running turn's collapsed block instead of showing it by the command.
+              _meta: { commandOutput: true },
               content: {
                 type: 'text',
                 text: 'Nothing to export yet (no session messages). Send a prompt first.'
@@ -1003,6 +1078,11 @@ export class PiAcpAgent implements ACPAgent {
               sessionId: session.sessionId,
               update: {
                 sessionUpdate: 'agent_message_chunk',
+                // Transient SNAPSHOT (slash-command result / status notice), not
+                // conversation. Without the marker a client cannot tell it from the
+                // assistant's own text, so vscode-acp's compact mode folded it into the
+                // running turn's collapsed block instead of showing it by the command.
+                _meta: { commandOutput: true },
                 content: {
                   type: 'text',
                   text: 'Nothing to export yet (empty session file). Send a prompt first.'
@@ -1016,6 +1096,11 @@ export class PiAcpAgent implements ACPAgent {
             sessionId: session.sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
+              // Transient SNAPSHOT (slash-command result / status notice), not
+              // conversation. Without the marker a client cannot tell it from the
+              // assistant's own text, so vscode-acp's compact mode folded it into the
+              // running turn's collapsed block instead of showing it by the command.
+              _meta: { commandOutput: true },
               content: {
                 type: 'text',
                 text: "Couldn't read session file for export. Try sending a prompt first."
@@ -1037,6 +1122,11 @@ export class PiAcpAgent implements ACPAgent {
             sessionId: session.sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
+              // Transient SNAPSHOT (slash-command result / status notice), not
+              // conversation. Without the marker a client cannot tell it from the
+              // assistant's own text, so vscode-acp's compact mode folded it into the
+              // running turn's collapsed block instead of showing it by the command.
+              _meta: { commandOutput: true },
               content: {
                 type: 'text',
                 text: `Export failed: ${String(e?.message ?? e)}`
@@ -1051,6 +1141,11 @@ export class PiAcpAgent implements ACPAgent {
             sessionId: session.sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
+              // Transient SNAPSHOT (slash-command result / status notice), not
+              // conversation. Without the marker a client cannot tell it from the
+              // assistant's own text, so vscode-acp's compact mode folded it into the
+              // running turn's collapsed block instead of showing it by the command.
+              _meta: { commandOutput: true },
               content: {
                 type: 'text',
                 text: 'Export failed: no output path returned by pi.'
@@ -1068,6 +1163,11 @@ export class PiAcpAgent implements ACPAgent {
           sessionId: session.sessionId,
           update: {
             sessionUpdate: 'agent_message_chunk',
+            // Transient SNAPSHOT (slash-command result / status notice), not
+            // conversation. Without the marker a client cannot tell it from the
+            // assistant's own text, so vscode-acp's compact mode folded it into the
+            // running turn's collapsed block instead of showing it by the command.
+            _meta: { commandOutput: true },
             content: {
               type: 'text',
               text: 'Session exported: '
@@ -1079,6 +1179,11 @@ export class PiAcpAgent implements ACPAgent {
           sessionId: session.sessionId,
           update: {
             sessionUpdate: 'agent_message_chunk',
+            // Transient SNAPSHOT (slash-command result / status notice), not
+            // conversation. Without the marker a client cannot tell it from the
+            // assistant's own text, so vscode-acp's compact mode folded it into the
+            // running turn's collapsed block instead of showing it by the command.
+            _meta: { commandOutput: true },
             content: {
               type: 'resource_link',
               name: `pi-session-${safeSessionId}.html`,
@@ -1111,6 +1216,11 @@ export class PiAcpAgent implements ACPAgent {
           sessionId: session.sessionId,
           update: {
             sessionUpdate: 'agent_message_chunk',
+            // Transient SNAPSHOT (slash-command result / status notice), not
+            // conversation. Without the marker a client cannot tell it from the
+            // assistant's own text, so vscode-acp's compact mode folded it into the
+            // running turn's collapsed block instead of showing it by the command.
+            _meta: { commandOutput: true },
             content: {
               type: 'text',
               text: `Auto-compaction ${enabled ? 'enabled' : 'disabled'}.`
