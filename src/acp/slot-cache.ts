@@ -60,6 +60,16 @@ function slotCacheDir(): string | null {
 }
 
 /**
+ * Auth header for the slot endpoint. llama.cpp's /slots is unauthenticated, but
+ * Strata gates it behind the same API key as the chat API. Read the key from
+ * PI_SLOT_CACHE_API_KEY, falling back to the key Pi already uses.
+ */
+function slotAuthHeaders(): Record<string, string> {
+  const key = process.env.PI_SLOT_CACHE_API_KEY || process.env.PI_API_KEY || process.env.OPENAI_API_KEY
+  return key ? { Authorization: `Bearer ${key}` } : {}
+}
+
+/**
  * Save the KV cache for a llama-server slot to a file.
  * @param slotId - The llama-server slot ID (usually 0 for single-slot)
  * @param filename - Base filename for the saved KV (e.g. session ID)
@@ -80,7 +90,7 @@ export async function saveSlotCache(
   try {
     const res = await fetch(`${url}?action=save`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...slotAuthHeaders() },
       body: JSON.stringify({ filename }),
       signal: AbortSignal.timeout(SAVE_TIMEOUT_MS),
     })
@@ -138,7 +148,7 @@ export async function restoreSlotCache(
   try {
     const res = await fetch(`${url}?action=restore`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...slotAuthHeaders() },
       body: JSON.stringify({ filename }),
       signal: AbortSignal.timeout(RESTORE_TIMEOUT_MS),
     })
@@ -186,6 +196,7 @@ export async function isSlotCacheAvailable(slotId: number = 0): Promise<boolean>
   try {
     const res = await fetch(`${base}/slots/${slotId}`, {
       method: 'GET',
+      headers: { ...slotAuthHeaders() },
       signal: AbortSignal.timeout(5_000),
     })
     // If the server responds to /slots/ at all, it supports slot monitoring.
@@ -212,6 +223,7 @@ export async function getSlotInfo(slotId: number = 0): Promise<{
   try {
     const res = await fetch(`${base}/slots/${slotId}`, {
       method: 'GET',
+      headers: { ...slotAuthHeaders() },
       signal: AbortSignal.timeout(5_000),
     })
     if (!res.ok) return null
