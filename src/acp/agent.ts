@@ -62,7 +62,8 @@ import {
 } from './goal.js'
 import { maybeAuthRequiredError } from './auth-required.js'
 import { isAbsolute } from 'node:path'
-import { existsSync, readFileSync, realpathSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, readdirSync, statSync, unlinkSync, writeFileSync, mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import type { AvailableCommand } from '@agentclientprotocol/sdk'
 import { join, dirname, basename } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -633,17 +634,42 @@ export class PiAcpAgent implements ACPAgent {
   async prompt(params: PromptRequest): Promise<PromptResponse> {
     const session = await this.restoreSession(params.sessionId)
 
-    const { message, images } = promptToPiMessage(params.prompt)
+    const piPrompt = promptToPiMessage(params.prompt)
+    let message = piPrompt.message
+    const images = piPrompt.images
 
-    // Reject image prompts when the active model is text-only (mirrors
-    // codex-acp's supportedInputModalities gate). Pi does not expose per-model
-    // modalities, so we derive image support from the model id.
+    // Graceful degradation: if the active model is text-only but the prompt
+    // carries images, persist each image to a temp file and append a text note
+    // to the message instead of rejecting the turn. Pi does not expose
+    // per-model modalities, so image support is derived from the model id.
+    // This keeps the video-frame fallback (and any image attach) working on
+    // text-only models — the turn proceeds and the model/user know what was
+    // attached and where it lives on disk.
     if (images.length > 0) {
       const currentModelId = await this.currentModelId(session)
       if (!modelSupportsImage(currentModelId)) {
-        throw RequestError.invalidRequest(
-          `The current model (${currentModelId || 'unknown'}) does not support image input`
-        )
+        console.log(`[pi-acp] Prompt on text-only model (${currentModelId || 'unknown'}): degrading ${images.length} image(s) to text notes`)
+        let imageIdx = 0
+        const notes: string[] = []
+        for (const img of images) {
+          imageIdx++
+          let tempPath: string | null = null
+          try {
+            const dir = mkdtempSync(join(tmpdir(), `pi-acp-img-${params.sessionId.slice(0, 8)}-`))
+            const ext = (img.mimeType || 'image/png').split('/')[1] || 'png'
+            tempPath = join(dir, `image-${imageIdx}.${ext}`)
+            writeFileSync(tempPath, Buffer.from(img.data, 'base64'))
+          } catch (e) {
+            console.error(`[pi-acp] Failed to persist attached image to temp file: ${e?.message ?? e}`)
+          }
+          const pathNote = tempPath ? `Saved to: ${tempPath}` : '(could not persist to disk)'
+          notes.push(`[Attached image #${imageIdx} (${img.mimeType || 'unknown'}). The current model does NOT support image input, so you cannot see it. ${pathNote}. If you need to analyze it, ask the user to switch to a vision-capable model and re-attach, or use a tool that routes to one.]`)
+        }
+        // Replace the image list with nothing; append notes to the message.
+        images.length = 0
+        if (notes.length > 0) {
+          message += (message.length > 0 ? '\n' : '') + notes.join('\n')
+        }
       }
     }
 
